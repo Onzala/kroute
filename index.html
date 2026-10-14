@@ -100,6 +100,9 @@ textarea{min-height:76px;resize:vertical}
 .check{border-radius:var(--r);padding:10px 12px;font-size:14px;display:flex;gap:8px;align-items:flex-start}
 .check.ok{background:var(--ok-bg)} .check.warn{background:var(--warn-bg);color:var(--warn)} .check.info{background:var(--info-bg)}
 .check b{display:block}
+.multi{border:1px solid var(--line);border-radius:var(--r);padding:10px 12px}
+.multi summary{cursor:pointer;font-size:14px}
+.multi .kv{grid-template-columns:6.5em 1fr}
 .choose{display:flex;flex-direction:column;gap:6px}
 .choose label{display:flex;gap:8px;align-items:center;font-size:15px;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r)}
 .map{height:200px;border-radius:var(--r);overflow:hidden;border:1px solid var(--line);background:var(--info-bg)}
@@ -252,6 +255,29 @@ function nameSim(a,b){a=norm(a);b=norm(b);if(!a||!b)return 0;if(a===b)return 1;i
   const bg=s=>{const m=new Map();for(let i=0;i<s.length-1;i++){const g=s.slice(i,i+2);m.set(g,(m.get(g)||0)+1)}return m};
   const A=bg(a),B=bg(b);let inter=0,n=0;A.forEach((v,k)=>{inter+=Math.min(v,B.get(k)||0);n+=v});B.forEach(v=>n+=v);return n?2*inter/n:0}
 async function copyText(t){try{await navigator.clipboard.writeText(t);toast('已複製')}catch(e){toast('無法自動複製，請長按文字複製')}}
+const hasHan=s=>/[㐀-鿿]/.test(s||''), hasHangul=s=>/[가-힣]/.test(s||'');
+// 韓文 → 羅馬拼音（國語羅馬字，逐字轉寫＋基本連音），只供核對招牌、路標用，不是官方英文名
+const RR_I=['g','kk','n','d','tt','r','m','b','pp','s','ss','','j','jj','ch','k','t','p','h'];
+const RR_V=['a','ae','ya','yae','eo','e','yeo','ye','o','wa','wae','oe','yo','u','wo','we','wi','yu','eu','ui','i'];
+const RR_F=['','k','k','k','n','n','n','t','l','k','m','l','l','l','p','l','m','p','p','t','t','ng','t','t','k','t','p','t'];
+const RR_LINK={1:'g',2:'kk',4:'n',7:'d',8:'r',16:'m',17:'b',19:'s',20:'ss',22:'j',23:'ch',24:'k',25:'t',26:'p',27:''};
+function romanize(str){
+  const ch=[...String(str||'')];let out='',skipIni=false;
+  for(let i=0;i<ch.length;i++){
+    const c=ch[i].charCodeAt(0)-0xAC00;
+    if(c<0||c>11171){out+=ch[i];skipIni=false;continue}
+    const ini=Math.floor(c/588), med=Math.floor(c%588/28), fin=c%28;
+    out+=(skipIni?'':RR_I[ini])+RR_V[med];skipIni=false;
+    if(!fin)continue;
+    const n=(ch[i+1]||'').charCodeAt(0)-0xAC00, nIni=n>=0&&n<=11171?Math.floor(n/588):-1;
+    if(nIni===11&&fin in RR_LINK)out+=RR_LINK[fin];          // 連音：받침＋ㅇ
+    else if(fin===8&&nIni===5){out+='ll';skipIni=true}        // ㄹ＋ㄹ → ll
+    else out+=RR_F[fin];
+  }
+  return out.replace(/\S+/g,w=>w.charAt(0).toUpperCase()+w.slice(1));
+}
+// 名稱可能是「A & B」「A(B)」之類的合寫，拆開來分別比對
+function nameParts(s){return [...new Set(String(s||'').split(/\s*(?:&|＆|\/|·|,|，|\(|\)|（|）)\s*/).map(x=>x.trim()).filter(x=>norm(x).length>=2&&norm(x)!==norm(s)))]}
 function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7)}
 
 /* ======================= 載入 Google / Kakao ======================= */
@@ -288,16 +314,19 @@ const KOREA_BOUNDS={south:33.0,west:124.5,north:38.7,east:131.0};
 /* ======================= Google 搜尋 ======================= */
 async function googleSearch(text,bias){
   const {Place}=await loadGoogle();
-  const req={textQuery:text,fields:['id','displayName','formattedAddress','location'],language:'zh-TW',region:'kr',maxResultCount:8};
+  const req={textQuery:text,fields:['id','displayName','formattedAddress','location','primaryTypeDisplayName'],language:'zh-TW',region:'kr',maxResultCount:8};
   if(bias)req.locationBias={center:bias,radius:300}; else req.locationRestriction=KOREA_BOUNDS;
   const {places:res}=await Place.searchByText(req);
-  return (res||[]).map(p=>({id:p.id,name:p.displayName,addr:p.formattedAddress,lat:p.location.lat(),lng:p.location.lng()}));
+  return (res||[]).map(p=>({id:p.id,name:p.displayName,addr:p.formattedAddress,type:p.primaryTypeDisplayName||'',lat:p.location.lat(),lng:p.location.lng()}));
 }
 async function googleKo(id){
   const {Place}=await loadGoogle();
   const p=new Place({id,requestedLanguage:'ko',requestedRegion:'kr'});
-  await p.fetchFields({fields:['displayName','formattedAddress','location','googleMapsURI']});
-  return {name:p.displayName,addr:p.formattedAddress,lat:p.location.lat(),lng:p.location.lng(),url:p.googleMapsURI};
+  const e=new Place({id,requestedLanguage:'en',requestedRegion:'kr'}); // 英文名稱與地址，供多重比對
+  await Promise.all([p.fetchFields({fields:['displayName','formattedAddress','location','googleMapsURI']}),
+    e.fetchFields({fields:['displayName','formattedAddress']}).catch(()=>{})]);
+  return {name:p.displayName,addr:p.formattedAddress,lat:p.location.lat(),lng:p.location.lng(),url:p.googleMapsURI,
+    en:e.displayName||'',enAddr:e.formattedAddress||''};
 }
 
 /* ======================= Kakao 比對 ======================= */
@@ -307,12 +336,17 @@ async function kakaoCheck(koName,lat,lng){
   const ps=new kakao.maps.services.Places(), geo=new kakao.maps.services.Geocoder();
   const here=new kakao.maps.LatLng(lat,lng), S=kakao.maps.services.SortBy;
   const near=await kPromise(cb=>ps.keywordSearch(koName,cb,{location:here,radius:2000,sort:S.DISTANCE,size:5}));
+  const parts=nameParts(koName);let byPart=[];
+  if(!near.some(d=>nameSim(koName,d.place_name)>=.5))
+    for(const w of parts)byPart.push(...await kPromise(cb=>ps.keywordSearch(w,cb,{location:here,radius:2000,sort:S.DISTANCE,size:5})));
   let wide=[];
-  if(!near.length)wide=await kPromise(cb=>ps.keywordSearch(koName,cb,{size:5}));
+  if(!near.length&&!byPart.length)wide=await kPromise(cb=>ps.keywordSearch(koName,cb,{size:5}));
   const addrs=await kPromise(cb=>geo.coord2Address(lng,lat,cb));
   const stations=await kPromise(cb=>ps.categorySearch('SW8',cb,{location:here,radius:1500,sort:S.DISTANCE,size:3}));
-  const cand=[...near,...wide].map(d=>({name:d.place_name,road:d.road_address_name,jibun:d.address_name,lat:+d.y,lng:+d.x,url:d.place_url,
-    dist:haversine({lat,lng},{lat:+d.y,lng:+d.x}),sim:nameSim(koName,d.place_name)}));
+  const seen=new Set();
+  const cand=[...near,...byPart,...wide].filter(d=>!seen.has(d.id)&&seen.add(d.id)).map(d=>({name:d.place_name,road:d.road_address_name,jibun:d.address_name,lat:+d.y,lng:+d.x,url:d.place_url,
+    cat:d.category_name||'',dist:haversine({lat,lng},{lat:+d.y,lng:+d.x}),
+    sim:Math.max(nameSim(koName,d.place_name),...parts.map(w=>nameSim(w,d.place_name)*.95))}));
   cand.sort((a,b)=>(b.sim-a.sim)||(a.dist-b.dist));
   let best=cand[0]||null, verdict;
   const closeNamed=cand.find(c=>c.sim>=.5&&c.dist<=150);
@@ -348,7 +382,7 @@ async function runSearch(text,bias){
     setStatus('點選正確的地點：');
     const box=$('#results');box.innerHTML='';
     res.forEach(r=>{const b=document.createElement('button');b.type='button';
-      b.innerHTML='<span class="n">'+esc(r.name)+'</span><span class="a">'+esc(r.addr)+'</span>';
+      b.innerHTML='<span class="n">'+esc(r.name)+'</span><span class="a">'+(r.type?esc(r.type)+' · ':'')+esc(r.addr)+'</span>';
       b.addEventListener('click',()=>pick(r));box.appendChild(b)});
     box.hidden=false;
   }catch(err){setStatus(errMsg(err))}
@@ -363,7 +397,7 @@ async function pick(r){
   try{
     const ko=await googleKo(r.id);
     const chk=await kakaoCheck(ko.name,ko.lat,ko.lng);
-    current={zh:r.name,zhAddr:r.addr,g:ko,chk};
+    current={zh:r.name,zhAddr:r.addr,type:r.type||'',g:ko,chk};
     setStatus('');renderConfirm();
   }catch(err){setStatus(errMsg(err))}
 }
@@ -390,12 +424,24 @@ function renderConfirm(){
     ?'<div class="choose" role="radiogroup" aria-label="韓文名稱">'+names.map((n,i)=>'<label><input type="radio" name="koPick" value="'+i+'"'+(i===0?' checked':'')+'> <span lang="ko" style="font-weight:700">'+esc(n.v)+'</span> <span class="muted">（'+n.src+'）</span></label>').join('')+'</div>'
     :'<p class="ko-name" lang="ko">'+esc(names[0].v)+'</p>';
   c.names=names;
+  const zhOk=hasHan(c.zh)&&!hasHangul(c.zh), en=c.g.en||'';
+  const head=zhOk?c.zh:(en||c.zh);
+  const simTxt=!b?'':b.sim>=.99?'相同':b.sim>=.5?'部分相同':'不同';
+  const tr='https://translate.google.com/?sl=ko&tl=zh-TW&op=translate&text='+encodeURIComponent(names[0].v);
+  const multi='<details class="multi" open><summary><b>多語名稱對照</b></summary><dl class="kv" style="margin-top:8px">'+
+    '<dt>Google 中文</dt><dd>'+(zhOk?esc(c.zh):'<span class="muted">Google 沒有中文名稱</span>')+(c.type?' <span class="muted">· '+esc(c.type)+'</span>':'')+'</dd>'+
+    '<dt>Google 英文</dt><dd>'+(en?esc(en):'<span class="muted">無</span>')+'</dd>'+
+    '<dt>Google 韓文</dt><dd lang="ko">'+esc(c.g.name)+'</dd>'+
+    '<dt>Kakao 韓文</dt><dd>'+(b?'<span lang="ko">'+esc(b.name)+'</span> <span class="muted">（名稱'+simTxt+'，相距 '+fmtDist(b.dist)+'）</span>'+(b.cat?'<br><span class="muted" lang="ko">'+esc(b.cat)+'</span>':''):'<span class="muted">查無</span>')+'</dd>'+
+    '<dt>羅馬拼音</dt><dd>'+esc(romanize(names[0].v))+' <span class="muted">（逐字轉寫，對照招牌用）</span></dd>'+
+    (c.g.enAddr?'<dt>英文地址</dt><dd>'+esc(c.g.enAddr)+'</dd>':'')+
+    '</dl><a class="btn small" style="margin-top:8px" href="'+tr+'" target="_blank" rel="noopener">用 Google 翻譯看韓文名稱的意思</a></details>';
   const st=k.stations.length?k.stations.map(s=>'<span lang="ko">'+esc(s.name)+'</span> <span class="muted">直線 '+fmtDist(s.dist)+'</span>').join('<br>'):'<span class="muted">1.5 公里內沒有地鐵站</span>';
 
   $('#confirm').innerHTML=
    '<div class="card">'+
-     '<div><div class="zh-name">'+esc(c.zh)+'</div>'+nameBlock+'</div>'+
-     check+
+     '<div><div class="zh-name">'+esc(head)+'</div>'+nameBlock+'</div>'+
+     check+multi+
      '<dl class="kv"><dt>道路名地址</dt><dd lang="ko">'+(road?esc(road):'<span class="muted">查無</span>')+'</dd>'+
      '<dt>地號地址</dt><dd lang="ko">'+(jibun?esc(jibun):'<span class="muted">查無</span>')+'</dd>'+
      '<dt>附近地鐵</dt><dd>'+st+'</dd></dl>'+
@@ -416,7 +462,8 @@ function saveCurrent(){
   const c=current;if(!c)return;
   const sel=document.querySelector('input[name=koPick]:checked');
   const ko=c.names[sel?+sel.value:0].v;
-  const item={id:uid(),zh:c.zh,ko,koGoogle:c.g.name,road:c.final.road,jibun:c.final.jibun,lat:c.final.pos.lat,lng:c.final.pos.lng,
+  const zhOk=hasHan(c.zh)&&!hasHangul(c.zh);
+  const item={id:uid(),zh:zhOk?c.zh:'',en:c.g.en||'',enAddr:c.g.enAddr||'',type:c.type||'',ko,koGoogle:c.g.name,road:c.final.road,jibun:c.final.jibun,lat:c.final.pos.lat,lng:c.final.pos.lng,
     verdict:c.final.verdict,stations:c.chk.stations.slice(0,2),note:$('#cNote').value.trim(),gUrl:c.g.url||'',kUrl:c.final.kakaoUrl,at:new Date().toISOString()};
   places.unshift(item);store.set(K_PLACES,places);renderList();
   current=null;$('#confirm').innerHTML='';$('#q').value='';
@@ -536,7 +583,7 @@ function takeShared(){
 /* ======================= 清單 ======================= */
 function renderStartSel(){
   const sel=$('#startSel');const cur=store.get(K_START,'');
-  sel.innerHTML='<option value="">目前位置</option>'+places.map(p=>'<option value="'+esc(p.id)+'"'+(p.id===cur?' selected':'')+'>'+esc(p.zh||p.ko)+'</option>').join('');
+  sel.innerHTML='<option value="">目前位置</option>'+places.map(p=>'<option value="'+esc(p.id)+'"'+(p.id===cur?' selected':'')+'>'+esc(p.zh||p.en||p.ko)+'</option>').join('');
 }
 $('#startSel').addEventListener('change',e=>store.set(K_START,e.target.value));
 function renderList(){
@@ -548,7 +595,7 @@ function renderList(){
     const flag=p.verdict==='ok'?'<span class="flag ok">雙方一致</span>':'<span class="flag warn">'+({rename:'名稱有差異',far:'位置有差異',none:'僅 Google',kakao:'僅 Kakao'}[p.verdict]||'待確認')+'</span>';
     const exitNum=((p.note||"").match(/(\d+)\s*號?\s*(出口|출구)/)||[])[1];
     return '<article class="item" data-id="'+esc(p.id)+'">'+
-      '<div class="head"><div style="min-width:0"><div class="ko" lang="ko">'+esc(p.ko)+'</div><div class="muted">'+esc(p.zh)+'</div></div>'+flag+'</div>'+
+      '<div class="head"><div style="min-width:0"><div class="ko" lang="ko">'+esc(p.ko)+'</div><div class="muted">'+esc([p.zh,p.en].filter(Boolean).join(' · ')||romanize(p.ko))+'</div></div>'+flag+'</div>'+
       (p.road||p.jibun?'<div class="addr" lang="ko">'+esc(p.road||p.jibun)+'</div>':'')+
       (p.stations&&p.stations.length?'<div class="station">'+(exitNum?'<span class="exit" aria-label="'+exitNum+' 號出口">'+exitNum+'</span>':'')+'<span lang="ko">'+esc(p.stations[0].name)+'</span><span class="muted">直線 '+fmtDist(p.stations[0].dist)+'</span></div>':'')+
       '<div class="note"><input type="text" value="'+esc(p.note)+'" placeholder="出口備註，例：3 號出口" data-act="note" aria-label="出口備註"></div>'+
