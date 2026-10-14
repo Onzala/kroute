@@ -1,0 +1,5 @@
+# 金鑰與清單只存在手機瀏覽器，不得進入儲存庫
+*.json
+!manifest.webmanifest
+.DS_Store
+Thumbs.db
