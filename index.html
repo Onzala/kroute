@@ -236,7 +236,7 @@ code{font-size:13px;background:var(--info-bg);padding:2px 6px;border-radius:5px;
 <script>
 'use strict';
 /* ======================= 儲存 ======================= */
-const APP_VERSION='v0.3.1';
+const APP_VERSION='v0.4.0';
 const K_PLACES='kroute.places.v1', K_KEYS='kroute.keys.v1', K_START='kroute.start.v1';
 const store={
   get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},
@@ -334,6 +334,21 @@ async function googleKo(id){
     en:e.displayName||'',enAddr:e.formattedAddress||''};
 }
 
+/* ======================= 機器翻譯（選用） ======================= */
+// Google 沒有中文／英文名稱時，用 Cloud Translation API 翻譯韓文名稱，只供理解意思；導航與司機卡仍用韓文原名。
+// 需在 Google Cloud 啟用「Cloud Translation API」並加入金鑰的 API 限制；未啟用時顯示提示，不影響其他功能。
+const mtCache=new Map();
+async function machineTranslate(text,target){
+  const ck=target+'|'+text;if(mtCache.has(ck))return mtCache.get(ck);
+  const r=await fetch('https://translation.googleapis.com/language/translate/v2',{method:'POST',
+    headers:{'Content-Type':'application/json','X-Goog-Api-Key':keys.google},
+    body:JSON.stringify({q:text,source:'ko',target,format:'text'})});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok){const e=new Error(j.error&&j.error.message||('HTTP '+r.status));e.status=r.status;throw e}
+  const out=j.data.translations[0].translatedText;mtCache.set(ck,out);return out;
+}
+function mtErrText(e){return e&&e.status===403?'Cloud Translation API 未啟用或金鑰未授權（選用功能）':'翻譯失敗：'+(e&&e.message||e)}
+
 /* ======================= Kakao 比對 ======================= */
 function kPromise(fn){return new Promise(res=>fn((data,status)=>res(status===kakao.maps.services.Status.OK?data:[])))}
 async function kakaoCheck(koName,lat,lng){
@@ -429,13 +444,15 @@ function renderConfirm(){
     ?'<div class="choose" role="radiogroup" aria-label="韓文名稱">'+names.map((n,i)=>'<label><input type="radio" name="koPick" value="'+i+'"'+(i===0?' checked':'')+'> <span lang="ko" style="font-weight:700">'+esc(n.v)+'</span> <span class="muted">（'+n.src+'）</span></label>').join('')+'</div>'
     :'<p class="ko-name" lang="ko">'+esc(names[0].v)+'</p>';
   c.names=names;
-  const zhOk=hasHan(c.zh)&&!hasHangul(c.zh), en=c.g.en||'';
+  const zhOk=hasHan(c.zh)&&!hasHangul(c.zh), en=hasHangul(c.g.en)?'':(c.g.en||'');
   const head=zhOk?c.zh:(en||c.zh);
   const simTxt=!b?'':b.sim>=.99?'相同':b.sim>=.5?'部分相同':'不同';
   const tr='https://translate.google.com/?sl=ko&tl=zh-TW&op=translate&text='+encodeURIComponent(names[0].v);
   const multi='<details class="multi" open><summary><b>多語名稱對照</b></summary><dl class="kv" style="margin-top:8px">'+
     '<dt>Google 中文</dt><dd>'+(zhOk?esc(c.zh):'<span class="muted">Google 沒有中文名稱</span>')+(c.type?' <span class="muted">· '+esc(c.type)+'</span>':'')+'</dd>'+
-    '<dt>Google 英文</dt><dd>'+(en?esc(en):'<span class="muted">無</span>')+'</dd>'+
+    '<dt>Google 英文</dt><dd>'+(en?esc(en):'<span class="muted">Google 沒有英文名稱</span>')+'</dd>'+
+    (!zhOk?'<dt>機翻中文</dt><dd id="mtZh"><span class="spin"></span></dd>':'')+
+    (!en?'<dt>機翻英文</dt><dd id="mtEn"><span class="spin"></span></dd>':'')+
     '<dt>Google 韓文</dt><dd lang="ko">'+esc(c.g.name)+'</dd>'+
     '<dt>Kakao 韓文</dt><dd>'+(b?'<span lang="ko">'+esc(b.name)+'</span> <span class="muted">（名稱'+simTxt+'，相距 '+fmtDist(b.dist)+'）</span>'+(b.cat?'<br><span class="muted" lang="ko">'+esc(b.cat)+'</span>':''):'<span class="muted">查無</span>')+'</dd>'+
     '<dt>羅馬拼音</dt><dd>'+esc(romanize(names[0].v))+' <span class="muted">（逐字轉寫，對照招牌用）</span></dd>'+
@@ -457,6 +474,12 @@ function renderConfirm(){
    '</div>';
   $('#btnSave').addEventListener('click',saveCurrent);
   drawMap($('#miniMap'),pos);
+  c.mt={};
+  const fill=(id,target)=>{const el=$('#'+id);if(!el)return;
+    machineTranslate(names[0].v,target).then(t=>{c.mt[target]=t;if(current!==c)return;
+      el.innerHTML=esc(t)+' <span class="muted">（機翻，僅供理解意思）</span>'})
+    .catch(e=>{if(current===c)el.innerHTML='<span class="muted">'+esc(mtErrText(e))+'</span>'})};
+  fill('mtZh','zh-TW');fill('mtEn','en');
 }
 function drawMap(el,pos){
   loadKakao().then(()=>{const ll=new kakao.maps.LatLng(pos.lat,pos.lng);
@@ -468,7 +491,8 @@ function saveCurrent(){
   const sel=document.querySelector('input[name=koPick]:checked');
   const ko=c.names[sel?+sel.value:0].v;
   const zhOk=hasHan(c.zh)&&!hasHangul(c.zh);
-  const item={id:uid(),zh:zhOk?c.zh:'',en:c.g.en||'',enAddr:c.g.enAddr||'',type:c.type||'',ko,koGoogle:c.g.name,road:c.final.road,jibun:c.final.jibun,lat:c.final.pos.lat,lng:c.final.pos.lng,
+  const mt=c.mt||{};
+  const item={id:uid(),zh:zhOk?c.zh:'',en:hasHangul(c.g.en)?'':(c.g.en||''),zhMT:zhOk?'':(mt['zh-TW']||''),enMT:mt.en||'',enAddr:c.g.enAddr||'',type:c.type||'',ko,koGoogle:c.g.name,road:c.final.road,jibun:c.final.jibun,lat:c.final.pos.lat,lng:c.final.pos.lng,
     verdict:c.final.verdict,stations:c.chk.stations.slice(0,2),note:$('#cNote').value.trim(),gUrl:c.g.url||'',kUrl:c.final.kakaoUrl,at:new Date().toISOString()};
   places.unshift(item);store.set(K_PLACES,places);renderList();
   current=null;$('#confirm').innerHTML='';$('#q').value='';
@@ -588,7 +612,7 @@ function takeShared(){
 /* ======================= 清單 ======================= */
 function renderStartSel(){
   const sel=$('#startSel');const cur=store.get(K_START,'');
-  sel.innerHTML='<option value="">目前位置</option>'+places.map(p=>'<option value="'+esc(p.id)+'"'+(p.id===cur?' selected':'')+'>'+esc(p.zh||p.en||p.ko)+'</option>').join('');
+  sel.innerHTML='<option value="">目前位置</option>'+places.map(p=>'<option value="'+esc(p.id)+'"'+(p.id===cur?' selected':'')+'>'+esc(p.zh||p.zhMT||p.en||p.ko)+'</option>').join('');
 }
 $('#startSel').addEventListener('change',e=>store.set(K_START,e.target.value));
 function renderList(){
@@ -600,7 +624,7 @@ function renderList(){
     const flag=p.verdict==='ok'?'<span class="flag ok">雙方一致</span>':'<span class="flag warn">'+({rename:'名稱有差異',far:'位置有差異',none:'僅 Google',kakao:'僅 Kakao'}[p.verdict]||'待確認')+'</span>';
     const exitNum=((p.note||"").match(/(\d+)\s*號?\s*(出口|출구)/)||[])[1];
     return '<article class="item" data-id="'+esc(p.id)+'">'+
-      '<div class="head"><div style="min-width:0"><div class="ko" lang="ko">'+esc(p.ko)+'</div><div class="muted">'+esc([p.zh,p.en].filter(Boolean).join(' · ')||romanize(p.ko))+'</div></div>'+flag+'</div>'+
+      '<div class="head"><div style="min-width:0"><div class="ko" lang="ko">'+esc(p.ko)+'</div><div class="muted">'+esc([p.zh||(p.zhMT?p.zhMT+'（機翻）':''),p.en||p.enMT].filter(Boolean).join(' · ')||romanize(p.ko))+'</div></div>'+flag+'</div>'+
       (p.road||p.jibun?'<div class="addr" lang="ko">'+esc(p.road||p.jibun)+'</div>':'')+
       (p.stations&&p.stations.length?'<div class="station">'+(exitNum?'<span class="exit" aria-label="'+exitNum+' 號出口">'+exitNum+'</span>':'')+'<span lang="ko">'+esc(p.stations[0].name)+'</span><span class="muted">直線 '+fmtDist(p.stations[0].dist)+'</span></div>':'')+
       '<div class="note"><input type="text" value="'+esc(p.note)+'" placeholder="出口備註，例：3 號出口" data-act="note" aria-label="出口備註"></div>'+
@@ -686,6 +710,7 @@ $('#btnSaveKeys').addEventListener('click',async()=>{
   const out=[];$('#keyTest').innerHTML='<span class="spin"></span> 測試中…';
   try{const r=await googleSearch('Seoul Station');out.push(r.length?'Google：正常':'Google：連上了，但搜尋沒有結果')}catch(e){out.push('Google：'+(e.message==='NO_KEY'?'未填':e.message))}
   try{await loadKakao();const r=await kakaoCheck('서울역',37.5547,126.9707);out.push(r.stations.length||r.road?'Kakao：正常':'Kakao：連上了，但查不到資料，請確認「카카오맵」已啟用')}catch(e){out.push('Kakao：'+(e.message==='NO_KEY'?'未填':e.message))}
+  try{const t=await machineTranslate('서울역','zh-TW');out.push('翻譯（選用）：正常（서울역 → '+t+'）')}catch(e){out.push('翻譯（選用）：'+mtErrText(e))}
   $('#keyTest').innerHTML=out.map(esc).join('<br>');
 });
 $('#btnExport').addEventListener('click',()=>{
