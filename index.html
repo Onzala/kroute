@@ -47,7 +47,7 @@ button,input,textarea,select{font:inherit;color:inherit}
 a{color:var(--focus)}
 
 .app{min-height:100%;display:flex;flex-direction:column}
-.top{position:sticky;top:0;z-index:5;background:var(--ink);color:var(--paper);
+.top{position:sticky;top:0;z-index:5;background:#16222E;color:#F5F7F6;
   padding:calc(env(safe-area-inset-top,0px) + 10px) max(16px,env(safe-area-inset-right,0px)) 10px max(16px,env(safe-area-inset-left,0px));
   display:flex;align-items:center;gap:10px}
 .top h1{margin:0;font-size:17px;font-weight:700;letter-spacing:.02em}
@@ -200,6 +200,10 @@ code{font-size:13px;background:var(--info-bg);padding:2px 6px;border-radius:5px;
         <p class="muted" style="margin:0">金鑰只存在這支手機的瀏覽器裡，不會上傳到 GitHub。</p>
       </div>
       <div class="card">
+        <h2>版本</h2>
+        <p class="muted" style="margin:0">目前版本：<b id="appVer"></b>。更新後若仍是舊版，把 App 完全關掉再開一次。</p>
+      </div>
+      <div class="card">
         <h2>本站網址</h2>
         <p class="muted" style="margin:0">Google 金鑰的「網站限制」和 Kakao 的「Web 平台網域」都要填這個網址。</p>
         <div class="row"><code id="origin"></code><button class="btn small" type="button" id="btnCopyOrigin">複製</button></div>
@@ -232,6 +236,7 @@ code{font-size:13px;background:var(--info-bg);padding:2px 6px;border-radius:5px;
 <script>
 'use strict';
 /* ======================= 儲存 ======================= */
+const APP_VERSION='v0.3.1';
 const K_PLACES='kroute.places.v1', K_KEYS='kroute.keys.v1', K_START='kroute.start.v1';
 const store={
   get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},
@@ -669,7 +674,7 @@ function confirmDelete(p){
 
 /* ======================= 設定 ======================= */
 $('#kGoogle').value=keys.google;$('#kKakao').value=keys.kakao;
-$('#origin').textContent=location.origin;
+$('#origin').textContent=location.origin;$('#appVer').textContent=APP_VERSION;
 $('#btnCopyOrigin').addEventListener('click',()=>copyText(location.origin));
 $('#btnShowKeys').addEventListener('click',e=>{const show=$('#kGoogle').type==='password';
   $('#kGoogle').type=$('#kKakao').type=show?'text':'password';e.target.textContent=show?'隱藏金鑰':'顯示金鑰'});

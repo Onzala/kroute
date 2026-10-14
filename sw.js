@@ -1,7 +1,7 @@
 /* 韓國找路 service worker：快取 App 殼層，讓沒有網路時仍能開清單、看韓文地址、用「給司機看」。
    Google、Kakao 的 API 一律不快取（搜尋本來就需要網路）。改版時把 VERSION 加 1。 */
 'use strict';
-const VERSION = 'v0.3.0';
+const VERSION = 'v0.3.1';
 const SHELL = 'kroute-shell-' + VERSION;
 const FONTS = 'kroute-fonts-v1';
 const SHELL_FILES = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
@@ -38,7 +38,8 @@ self.addEventListener('fetch', e => {
   // 頁面（含 Android 分享進來的 ?share=…）：網路優先，失敗時用快取的殼層
   if (req.mode === 'navigate') {
     e.respondWith(
-      fetch(req).then(r => {
+      // no-cache：一定向伺服器確認新版，避免瀏覽器 HTTP 快取（GitHub Pages 預設 10 分鐘）拿到舊頁面
+      fetch(req.url, { cache: 'no-cache', credentials: 'same-origin' }).then(r => {
         if (r.ok) { const copy = r.clone(); caches.open(SHELL).then(c => c.put('./index.html', copy)); }
         return r;
       }).catch(() => caches.match('./index.html', { ignoreSearch: true }))
