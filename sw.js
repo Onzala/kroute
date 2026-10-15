@@ -1,10 +1,10 @@
 /* 韓國找路 service worker：快取 App 殼層，讓沒有網路時仍能開清單、看韓文地址、用「給司機看」。
    Google、Kakao 的 API 一律不快取（搜尋本來就需要網路）。改版時把 VERSION 加 1。 */
 'use strict';
-const VERSION = 'v0.4.0';
+const VERSION = 'v0.5.0';
 const SHELL = 'kroute-shell-' + VERSION;
 const FONTS = 'kroute-fonts-v1';
-const SHELL_FILES = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
+const SHELL_FILES = ['./', './index.html', './config.js', './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(SHELL).then(c => c.addAll(SHELL_FILES)).then(() => self.skipWaiting()));
@@ -43,6 +43,17 @@ self.addEventListener('fetch', e => {
         if (r.ok) { const copy = r.clone(); caches.open(SHELL).then(c => c.put('./index.html', copy)); }
         return r;
       }).catch(() => caches.match('./index.html', { ignoreSearch: true }))
+    );
+    return;
+  }
+
+  // config.js（共用金鑰）：網路優先，換金鑰後馬上生效；離線時用快取
+  if (url.pathname.endsWith('/config.js')) {
+    e.respondWith(
+      fetch(req.url, { cache: 'no-cache' }).then(r => {
+        if (r.ok) { const copy = r.clone(); caches.open(SHELL).then(c => c.put('./config.js', copy)); }
+        return r;
+      }).catch(() => caches.match('./config.js'))
     );
     return;
   }

@@ -186,10 +186,11 @@ code{font-size:13px;background:var(--info-bg);padding:2px 6px;border-radius:5px;
     <section id="v-settings" class="stack" hidden>
       <div class="card">
         <h2>金鑰</h2>
-        <label class="f" for="kGoogle">Google Maps 金鑰（API key）
+        <p id="keySrc" class="muted" style="margin:0"></p>
+        <label class="f" for="kGoogle">自己的 Google Maps 金鑰（選填）
           <input id="kGoogle" type="password" autocomplete="off" spellcheck="false">
         </label>
-        <label class="f" for="kKakao">Kakao JavaScript 金鑰（JavaScript 키）
+        <label class="f" for="kKakao">自己的 Kakao JavaScript 金鑰（選填）
           <input id="kKakao" type="password" autocomplete="off" spellcheck="false">
         </label>
         <div class="row">
@@ -197,7 +198,7 @@ code{font-size:13px;background:var(--info-bg);padding:2px 6px;border-radius:5px;
           <button class="btn" id="btnShowKeys" type="button">顯示金鑰</button>
         </div>
         <div id="keyTest" class="muted" aria-live="polite"></div>
-        <p class="muted" style="margin:0">金鑰只存在這支手機的瀏覽器裡，不會上傳到 GitHub。</p>
+        <p class="muted" style="margin:0">留空＝使用共用金鑰。自己填的金鑰只存在這支手機的瀏覽器裡，不會上傳到 GitHub。</p>
       </div>
       <div class="card">
         <h2>版本</h2>
@@ -233,17 +234,25 @@ code{font-size:13px;background:var(--info-bg);padding:2px 6px;border-radius:5px;
 
 <div id="toast" class="toast" role="status" hidden></div>
 
+<script src="config.js"></script>
 <script>
 'use strict';
 /* ======================= 儲存 ======================= */
-const APP_VERSION='v0.4.0';
+const APP_VERSION='v0.5.0';
 const K_PLACES='kroute.places.v1', K_KEYS='kroute.keys.v1', K_START='kroute.start.v1';
 const store={
   get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},
   set(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true}catch(e){toast('無法儲存：瀏覽器拒絕寫入（可能是無痕模式）');return false}}
 };
 let places=store.get(K_PLACES,[]);
-let keys=store.get(K_KEYS,{google:'',kakao:''});
+// 共用金鑰（config.js）＋使用者自己的金鑰（localStorage）；使用者有填的那一把優先
+const shared=Object.assign({google:'',kakao:''},window.KROUTE_SHARED_KEYS||{});
+let own=store.get(K_KEYS,{google:'',kakao:''});
+const sameAsShared=k=>own[k]&&own[k]===shared[k];
+// 舊版會把金鑰存在手機；若和共用金鑰相同就清掉，之後換共用金鑰時才會跟著更新
+if(sameAsShared('google'))own.google='';if(sameAsShared('kakao'))own.kakao='';
+const mergeKeys=()=>({google:own.google||shared.google,kakao:own.kakao||shared.kakao});
+let keys=mergeKeys();
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const isAndroid=/Android/i.test(navigator.userAgent);
@@ -697,15 +706,21 @@ function confirmDelete(p){
 }
 
 /* ======================= 設定 ======================= */
-$('#kGoogle').value=keys.google;$('#kKakao').value=keys.kakao;
+$('#kGoogle').value=own.google;$('#kKakao').value=own.kakao;
+function renderKeySrc(){
+  const src=k=>own[k]?'自己的金鑰':shared[k]?'共用金鑰':'未設定';
+  $('#keySrc').textContent='目前使用：Google '+src('google')+'；Kakao '+src('kakao')+'。';
+}
+renderKeySrc();
 $('#origin').textContent=location.origin;$('#appVer').textContent=APP_VERSION;
 $('#btnCopyOrigin').addEventListener('click',()=>copyText(location.origin));
 $('#btnShowKeys').addEventListener('click',e=>{const show=$('#kGoogle').type==='password';
   $('#kGoogle').type=$('#kKakao').type=show?'text':'password';e.target.textContent=show?'隱藏金鑰':'顯示金鑰'});
 $('#btnSaveKeys').addEventListener('click',async()=>{
   const ng=$('#kGoogle').value.trim(), nk=$('#kKakao').value.trim();
-  const changed=ng!==keys.google||nk!==keys.kakao;
-  keys={google:ng,kakao:nk};store.set(K_KEYS,keys);showNeedKeys();
+  own={google:ng===shared.google?'':ng,kakao:nk===shared.kakao?'':nk};store.set(K_KEYS,own);
+  const next=mergeKeys(), changed=next.google!==keys.google||next.kakao!==keys.kakao;
+  keys=next;renderKeySrc();showNeedKeys();
   if(changed&&(window.google||window.kakao)){$('#keyTest').textContent='已儲存。金鑰有變更，正在重新載入頁面…';setTimeout(()=>location.reload(),900);return}
   const out=[];$('#keyTest').innerHTML='<span class="spin"></span> 測試中…';
   try{const r=await googleSearch('Seoul Station');out.push(r.length?'Google：正常':'Google：連上了，但搜尋沒有結果')}catch(e){out.push('Google：'+(e.message==='NO_KEY'?'未填':e.message))}
