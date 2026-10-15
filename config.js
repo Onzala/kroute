@@ -6,6 +6,6 @@
    - 留空字串＝不提供共用金鑰，使用者要在「設定」頁自己填。
    - 使用者在「設定」頁填了自己的金鑰時，以使用者的為準。 */
 window.KROUTE_SHARED_KEYS = {
-  google: '',  // 貼上以 AIza 開頭的 Google 金鑰
-  kakao: ''    // 貼上 Kakao「JavaScript 키」
+  google: 'AIzaSyDmstRNgwqoQj7MroiNXEMYnlDB97LoV2M',  // 貼上以 AIza 開頭的 Google 金鑰
+  kakao: '8427566d759c9cdab614e8aa38af30a1'    // 貼上 Kakao「JavaScript 키」
 };
